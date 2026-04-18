@@ -1,0 +1,532 @@
+// VW app — schema Prisma
+//
+// Alinhamento com Open Delivery v1.7.0:
+//   - MenuSection / MenuCategory / MenuItem     → Merchant.Menu / Category / Item
+//   - OptionGroup / Option                       → OptionGroup / Option (compartilháveis entre itens)
+//   - Order / OrderItem                          → Order + items (subset de estados)
+// Extensões dine-in (fora do padrão Open Delivery):
+//   - Tenant / Unit / Employee (auth staff)
+//   - Table / TableSession (sessão iniciada via QR)
+//   - Request (chamar garçom, conta, reclamação etc.)
+//   - FAQItem, DailyFeature
+//   - EventLog (fonte das mensagens SSE)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// =============================================================================
+// Multi-tenancy
+// =============================================================================
+
+model Tenant {
+  id                 String   @id @default(cuid())
+  // Correlaciona com Client.id no agent-hub
+  agentHubClientId   String   @unique
+  name               String
+  slug               String   @unique
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  units              Unit[]
+  employees          Employee[]
+  apiClients         ApiClient[]
+}
+
+model Unit {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  // Correlaciona com Agent.id no agent-hub (1 Agent por Unit)
+  agentHubAgentId    String   @unique
+  name               String
+  slug               String
+
+  // Open Delivery BasicInfo
+  phone              String?
+  whatsapp           String?
+  email              String?
+  website            String?
+  instagram          String?
+  description        String?
+  addressStreet      String?
+  addressNumber      String?
+  addressComplement  String?
+  addressNeighborhood String?
+  addressCity        String?
+  addressState       String?
+  addressZipcode     String?
+  addressCountry     String?  @default("BR")
+  latitude           Float?
+  longitude          Float?
+  timezone           String   @default("America/Sao_Paulo")
+  currency           String   @default("BRL")
+  locale             String   @default("pt-BR")
+
+  // Horários de funcionamento (JSON: { monday: [{open: "08:00", close: "22:00"}], ... })
+  operatingHours     Json?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  menuSections       MenuSection[]
+  faqItems           FAQItem[]
+  dailyFeatures      DailyFeature[]
+  tables             Table[]
+  tableSessions      TableSession[]
+  orders             Order[]
+  requests           Request[]
+  eventLogs          EventLog[]
+  employeeUnits      EmployeeUnit[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+}
+
+// =============================================================================
+// Staff interno (NextAuth)
+// =============================================================================
+
+enum EmployeeRole {
+  ADMIN
+  OPERATOR
+}
+
+model Employee {
+  id             String       @id @default(cuid())
+  tenantId       String
+  email          String
+  passwordHash   String
+  name           String
+  role           EmployeeRole
+  isActive       Boolean      @default(true)
+  lastLoginAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeUnits  EmployeeUnit[]
+  authSessions   AuthSession[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+}
+
+// Operador restrito a certas unidades; ADMIN herda acesso a todas do tenant (lógica na aplicação).
+model EmployeeUnit {
+  employeeId String
+  unitId     String
+  createdAt  DateTime @default(now())
+
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  unit       Unit     @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@id([employeeId, unitId])
+  @@index([unitId])
+}
+
+// Sessão NextAuth (distinta de TableSession). Mantemos nome AuthSession para evitar conflito.
+model AuthSession {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  employeeId   String
+  expires      DateTime
+
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+}
+
+// =============================================================================
+// Credenciais de máquina (agent-hub → VW via OAuth2 client_credentials)
+// =============================================================================
+
+model ApiClient {
+  id             String   @id @default(cuid())
+  tenantId       String
+  clientId       String   @unique
+  clientSecretHash String
+  name           String
+  scopes         String   @default("od.all")
+  isActive       Boolean  @default(true)
+  lastUsedAt     DateTime?
+  createdAt      DateTime @default(now())
+  revokedAt      DateTime?
+
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+// =============================================================================
+// Cardápio
+// =============================================================================
+
+model MenuSection {
+  id            String          @id @default(cuid())
+  unitId        String
+  name          String
+  sortOrder     Int             @default(0)
+  isAvailable   Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  unit          Unit            @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  categories    MenuCategory[]
+
+  @@unique([unitId, name])
+  @@index([unitId])
+}
+
+model MenuCategory {
+  id             String             @id @default(cuid())
+  sectionId      String
+  name           String
+  sortOrder      Int                @default(0)
+  isAvailable    Boolean            @default(true)
+  // Instruções contextuais consumidas pelo agente (ex.: "consultar garçom para trocas").
+  agentInstructions String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  section        MenuSection        @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  subcategories  MenuSubcategory[]
+  items          MenuItem[]
+
+  @@unique([sectionId, name])
+  @@index([sectionId])
+}
+
+model MenuSubcategory {
+  id          String       @id @default(cuid())
+  categoryId  String
+  name        String
+  sortOrder   Int          @default(0)
+  isAvailable Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  category    MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  items       MenuItem[]
+
+  @@unique([categoryId, name])
+  @@index([categoryId])
+}
+
+model MenuItem {
+  id             String       @id @default(cuid())
+  categoryId     String
+  subcategoryId  String?
+  name           String
+  description    String?
+  imageUrl       String?
+  basePrice      Decimal      @db.Decimal(10, 2)
+  isAvailable    Boolean      @default(true)
+  sortOrder      Int          @default(0)
+  ean            String?
+  // Instruções específicas do item consumidas pelo agente.
+  agentInstructions String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  category       MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  subcategory    MenuSubcategory? @relation(fields: [subcategoryId], references: [id], onDelete: SetNull)
+  optionGroups   MenuItemOptionGroup[]
+  orderItems     OrderItem[]
+
+  @@index([categoryId])
+  @@index([subcategoryId])
+}
+
+// OptionGroup pertence à Unit para permitir compartilhamento entre itens da mesma casa.
+model OptionGroup {
+  id            String   @id @default(cuid())
+  unitId        String
+  name          String
+  isMandatory   Boolean  @default(false)
+  minSelection  Int      @default(0)
+  maxSelection  Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  options       Option[]
+  items         MenuItemOptionGroup[]
+
+  @@index([unitId])
+}
+
+model Option {
+  id            String      @id @default(cuid())
+  optionGroupId String
+  name          String
+  priceDelta    Decimal     @default(0) @db.Decimal(10, 2)
+  isAvailable   Boolean     @default(true)
+  sortOrder     Int         @default(0)
+
+  optionGroup   OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
+
+  @@index([optionGroupId])
+}
+
+model MenuItemOptionGroup {
+  menuItemId    String
+  optionGroupId String
+  sortOrder     Int       @default(0)
+
+  menuItem      MenuItem    @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  optionGroup   OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
+
+  @@id([menuItemId, optionGroupId])
+  @@index([optionGroupId])
+}
+
+// =============================================================================
+// FAQ
+// =============================================================================
+
+model FAQItem {
+  id          String   @id @default(cuid())
+  unitId      String
+  category    String
+  question    String
+  answer      String
+  sortOrder   Int      @default(0)
+  isPublished Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  unit        Unit     @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@index([unitId])
+  @@index([unitId, category])
+}
+
+// =============================================================================
+// Entradinha do dia (cortesia)
+// =============================================================================
+
+model DailyFeature {
+  id          String   @id @default(cuid())
+  unitId      String
+  date        DateTime @db.Date
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  unit        Unit     @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@unique([unitId, date])
+  @@index([unitId])
+}
+
+// =============================================================================
+// Mesas e sessões via QR
+// =============================================================================
+
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+  DISABLED
+}
+
+model Table {
+  id             String        @id @default(cuid())
+  unitId         String
+  number         String
+  label          String?
+  status         TableStatus   @default(AVAILABLE)
+  qrToken        String        @unique
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  unit           Unit          @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  sessions       TableSession[]
+
+  @@unique([unitId, number])
+  @@index([unitId])
+}
+
+enum TableSessionStatus {
+  ACTIVE
+  CLOSED
+  ABANDONED
+}
+
+model TableSession {
+  id                        String             @id @default(cuid())
+  unitId                    String
+  tableId                   String
+  agentHubConversationId    String?
+  customerPhone             String?
+  status                    TableSessionStatus @default(ACTIVE)
+  startedAt                 DateTime           @default(now())
+  endedAt                   DateTime?
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
+
+  unit                      Unit               @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  table                     Table              @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  orders                    Order[]
+  requests                  Request[]
+
+  @@index([unitId, status])
+  @@index([tableId, status])
+  @@index([agentHubConversationId])
+}
+
+// =============================================================================
+// Pedidos (Open Delivery — subset dine-in)
+// =============================================================================
+
+enum OrderStatus {
+  CREATED
+  CONFIRMED
+  PREPARING
+  CONCLUDED
+  CANCELLED
+}
+
+model Order {
+  id                        String         @id @default(cuid())
+  unitId                    String
+  tableSessionId            String?
+  agentHubConversationId    String?
+  agentHubMessageId         String?
+  // Idempotência: o agent-hub envia o messageId do WhatsApp como idempotencyKey.
+  idempotencyKey            String?
+  status                    OrderStatus    @default(CREATED)
+  subtotal                  Decimal        @db.Decimal(10, 2)
+  total                     Decimal        @db.Decimal(10, 2)
+  notes                     String?
+  cancellationReason        String?
+  createdAt                 DateTime       @default(now())
+  confirmedAt               DateTime?
+  preparingAt               DateTime?
+  concludedAt               DateTime?
+  cancelledAt               DateTime?
+  updatedAt                 DateTime       @updatedAt
+
+  unit                      Unit           @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  tableSession              TableSession?  @relation(fields: [tableSessionId], references: [id], onDelete: SetNull)
+  items                     OrderItem[]
+
+  @@unique([unitId, idempotencyKey])
+  @@index([unitId, status])
+  @@index([tableSessionId])
+  @@index([agentHubConversationId])
+}
+
+model OrderItem {
+  id            String   @id @default(cuid())
+  orderId       String
+  menuItemId    String
+  itemName      String
+  quantity      Int      @default(1)
+  unitPrice     Decimal  @db.Decimal(10, 2)
+  totalPrice    Decimal  @db.Decimal(10, 2)
+  observations  String?
+  // Snapshot das opções escolhidas (preserva histórico mesmo se o catálogo mudar).
+  // Formato: [{ optionGroupName, optionName, priceDelta }]
+  selectedOptions Json?
+
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem      MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([menuItemId])
+}
+
+// =============================================================================
+// Solicitações (dine-in extension)
+// =============================================================================
+
+enum RequestType {
+  CALL_WAITER
+  PHYSICAL_MENU
+  CHECK
+  COMPLAINT
+  ORDER_CHANGE
+  ORDER_STATUS
+  ORDER_CANCEL
+  ALLERGY_INFO
+  CUSTOM_ITEM
+  OTHER
+}
+
+enum RequestStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  DISMISSED
+}
+
+model Request {
+  id                        String         @id @default(cuid())
+  unitId                    String
+  tableSessionId            String?
+  agentHubConversationId    String?
+  agentHubMessageId         String?
+  idempotencyKey            String?
+  type                      RequestType
+  description               String
+  status                    RequestStatus  @default(OPEN)
+  assignedToEmployeeId      String?
+  resolvedByEmployeeId      String?
+  resolutionNotes           String?
+  createdAt                 DateTime       @default(now())
+  acknowledgedAt            DateTime?
+  resolvedAt                DateTime?
+  updatedAt                 DateTime       @updatedAt
+
+  unit                      Unit           @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  tableSession              TableSession?  @relation(fields: [tableSessionId], references: [id], onDelete: SetNull)
+
+  @@unique([unitId, idempotencyKey])
+  @@index([unitId, status])
+  @@index([tableSessionId])
+  @@index([agentHubConversationId])
+}
+
+// =============================================================================
+// EventLog (fonte única para SSE + auditoria)
+// =============================================================================
+
+enum EventLogType {
+  ORDER_CREATED
+  ORDER_CONFIRMED
+  ORDER_PREPARING
+  ORDER_CONCLUDED
+  ORDER_CANCELLED
+  REQUEST_CREATED
+  REQUEST_ACKNOWLEDGED
+  REQUEST_RESOLVED
+  REQUEST_DISMISSED
+  TABLE_OCCUPIED
+  TABLE_RELEASED
+  MENU_UPDATED
+  DAILY_FEATURE_UPDATED
+}
+
+model EventLog {
+  id          String       @id @default(cuid())
+  unitId      String
+  type        EventLogType
+  entityType  String
+  entityId    String
+  payload     Json
+  createdAt   DateTime     @default(now())
+
+  unit        Unit         @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@index([unitId, createdAt])
+  @@index([unitId, type, createdAt])
+  @@index([entityType, entityId])
+}

@@ -1,0 +1,1072 @@
+openapi: 3.0.3
+info:
+  title: VW App API
+  version: 0.1.0
+  summary: Contrato entre o agent-hub (garçom virtual Phil) e o backend de domínio do restaurante.
+  description: |
+    Esta API é uma **extensão do padrão Open Delivery v1.7.0** (ABRASEL) para o
+    caso de uso de **consumo no salão (dine-in)**, não coberto pelo padrão original
+    (que trata apenas de `DELIVERY` e `TAKEOUT`).
+
+    **Organização da especificação:**
+
+    1. **Recursos Open Delivery compatíveis** — `/v1/merchant`, `/v1/orders/...`.
+       Os schemas `Merchant`, `Menu`, `Category`, `Item`, `OptionGroup`, `Option`,
+       `Order` seguem a spec oficial e podem ser consumidos por qualquer cliente
+       Open Delivery.
+    2. **Extensões dine-in** — prefixadas com `/v1/ext/*` ou anotadas com a
+       extensão OpenAPI `x-dinein: true`. Cobrem: sessões de mesa via QR, mesas,
+       solicitações operacionais (chamar garçom, conta, reclamação etc.), FAQ,
+       entradinha do dia e stream SSE de eventos operacionais.
+    3. **Contrato estável inter-provedor**: quando o cliente migrar do VW app
+       para o XMenu (ou outro POS), basta que o novo backend implemente este
+       contrato — zero mudanças no agent-hub.
+
+    **Autenticação primária:** OAuth2 `client_credentials` com escopo `od.all`
+    (compatível com Open Delivery). O `client_id` / `client_secret` é emitido por
+    tenant no VW app e armazenado criptografado em `ClientIntegration.apiKey` no
+    agent-hub.
+
+    **Idempotência:** `POST /v1/orders` e `POST /v1/ext/requests` aceitam o
+    header `Idempotency-Key` (o agent-hub envia o `messageId` do WhatsApp) — duas
+    chamadas com a mesma chave resultam em uma única entidade criada.
+
+  contact:
+    name: Arklab
+    email: mauro@mpconsulting.com.br
+  license:
+    name: Proprietário
+x-open-delivery-version: "1.7.0"
+x-dinein-extensions: true
+
+servers:
+  - url: https://{host}
+    description: Produção (por tenant)
+    variables:
+      host:
+        default: vw.arklab.app
+        description: Host específico do tenant
+  - url: http://localhost:3001
+    description: Desenvolvimento local
+
+tags:
+  - name: Auth
+    description: Emissão de tokens OAuth2.
+  - name: Merchant
+    description: Dados do estabelecimento (unidade).
+  - name: Catalog
+    description: Cardápio (seções, categorias, itens, option groups).
+  - name: Orders
+    description: Pedidos (Open Delivery, subset dine-in).
+  - name: Requests (x-dinein)
+    description: Solicitações operacionais (chamar garçom, conta, reclamação etc.).
+  - name: Sessions (x-dinein)
+    description: Sessões de mesa iniciadas via QR code.
+  - name: Tables (x-dinein)
+    description: Cadastro e estado das mesas.
+  - name: FAQ (x-dinein)
+    description: Base de perguntas frequentes consumida pelo agente.
+  - name: Daily Feature (x-dinein)
+    description: Entradinha do dia (cortesia).
+  - name: Events (x-dinein)
+    description: Stream SSE para o console operacional.
+
+# =============================================================================
+# Segurança
+# =============================================================================
+security:
+  - oauth2: [od.all]
+
+# =============================================================================
+# Paths
+# =============================================================================
+paths:
+  # --- Auth ----------------------------------------------------------------
+  /oauth/token:
+    post:
+      tags: [Auth]
+      summary: Emite um access token (OAuth2 client_credentials)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+      responses:
+        '200':
+          description: Token emitido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # --- Merchant (Open Delivery) --------------------------------------------
+  /v1/merchant:
+    get:
+      tags: [Merchant]
+      summary: Retorna os dados completos da unidade (Open Delivery Merchant)
+      responses:
+        '200':
+          description: Merchant
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Merchant' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/merchant/status:
+    get:
+      tags: [Merchant]
+      summary: Status de operação da unidade (aberto/fechado)
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MerchantStatus' }
+
+  # --- Catalog (Open Delivery + conveniências dine-in) ---------------------
+  /v1/catalog/sections:
+    get:
+      tags: [Catalog]
+      summary: Lista seções do cardápio
+      description: |
+        Atalho em relação ao endpoint `GET /v1/merchant`, que também retorna o
+        menu completo aninhado. Útil para consumidores que só precisam das
+        seções (ex.: tool `get_items` do agente navegando por seção).
+      responses:
+        '200':
+          description: Lista de seções
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MenuSection' }
+
+  /v1/catalog/sections/{sectionId}/items:
+    get:
+      tags: [Catalog]
+      summary: Lista itens de uma seção (com categorias, subcategorias e option groups)
+      parameters:
+        - $ref: '#/components/parameters/SectionId'
+      responses:
+        '200':
+          description: Itens da seção
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SectionDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/catalog/items/{itemId}:
+    get:
+      tags: [Catalog]
+      summary: Detalhe de um item
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+      responses:
+        '200':
+          description: Detalhe do item
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # --- Orders (Open Delivery, subset dine-in) ------------------------------
+  /v1/orders:
+    post:
+      tags: [Orders]
+      summary: Cria um pedido (tipicamente acionado pela tool create_order do agente)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderCreateRequest' }
+      responses:
+        '201':
+          description: Pedido criado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '200':
+          description: Pedido já existente (idempotent replay)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      tags: [Orders]
+      summary: Lista pedidos da unidade (filtráveis)
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/OrderStatusDineIn' }
+        - in: query
+          name: tableSessionId
+          schema: { type: string }
+        - in: query
+          name: since
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Lista de pedidos
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Order' }
+
+  /v1/orders/{orderId}:
+    get:
+      tags: [Orders]
+      summary: Detalhe de um pedido
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Pedido
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/orders/{orderId}/confirm:
+    post:
+      tags: [Orders]
+      summary: Confirma o pedido (operador aceitou)
+      parameters: [ { $ref: '#/components/parameters/OrderId' } ]
+      responses:
+        '204': { description: Confirmado }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/orders/{orderId}/preparing:
+    post:
+      tags: [Orders]
+      summary: Marca pedido como em preparo
+      parameters: [ { $ref: '#/components/parameters/OrderId' } ]
+      responses:
+        '204': { description: Em preparo }
+
+  /v1/orders/{orderId}/concluded:
+    post:
+      tags: [Orders]
+      summary: Marca pedido como entregue na mesa (equivalente dine-in de DELIVERED)
+      parameters: [ { $ref: '#/components/parameters/OrderId' } ]
+      responses:
+        '204': { description: Concluído }
+
+  /v1/orders/{orderId}/requestCancellation:
+    post:
+      tags: [Orders]
+      summary: Solicita cancelamento (Open Delivery)
+      parameters: [ { $ref: '#/components/parameters/OrderId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        '204': { description: Cancelamento solicitado }
+
+  # --- Sessions (x-dinein) -------------------------------------------------
+  /v1/ext/sessions/start:
+    post:
+      tags: [Sessions (x-dinein)]
+      x-dinein: true
+      summary: Inicia uma sessão de mesa (disparado pelo agente ao receber "Iniciar atendimento - Mesa X")
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionStartRequest' }
+      responses:
+        '201':
+          description: Sessão criada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TableSession' }
+        '200':
+          description: Sessão já existente (idempotent replay ou reabertura)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TableSession' }
+
+  /v1/ext/sessions/{sessionId}:
+    get:
+      tags: [Sessions (x-dinein)]
+      x-dinein: true
+      summary: Detalhe de uma sessão de mesa
+      parameters: [ { $ref: '#/components/parameters/SessionId' } ]
+      responses:
+        '200':
+          description: Sessão
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TableSession' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/ext/sessions/{sessionId}/close:
+    post:
+      tags: [Sessions (x-dinein)]
+      x-dinein: true
+      summary: Encerra a sessão (conta fechada e paga)
+      parameters: [ { $ref: '#/components/parameters/SessionId' } ]
+      responses:
+        '204': { description: Encerrada }
+
+  # --- Tables (x-dinein) ---------------------------------------------------
+  /v1/ext/tables:
+    get:
+      tags: [Tables (x-dinein)]
+      x-dinein: true
+      summary: Lista mesas da unidade
+      parameters:
+        - in: query
+          name: status
+          schema: { $ref: '#/components/schemas/TableStatus' }
+      responses:
+        '200':
+          description: Mesas
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Table' }
+
+  /v1/ext/tables/{tableId}:
+    patch:
+      tags: [Tables (x-dinein)]
+      x-dinein: true
+      summary: Atualiza estado da mesa (operador)
+      parameters: [ { $ref: '#/components/parameters/TableId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { $ref: '#/components/schemas/TableStatus' }
+                label: { type: string }
+      responses:
+        '200':
+          description: Atualizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Table' }
+
+  # --- Requests (x-dinein) -------------------------------------------------
+  /v1/ext/requests:
+    post:
+      tags: [Requests (x-dinein)]
+      x-dinein: true
+      summary: Registra solicitação operacional (chamar garçom, conta, reclamação, etc.)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RequestCreate' }
+      responses:
+        '201':
+          description: Solicitação criada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Request' }
+        '200':
+          description: Solicitação já existente (idempotent replay)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Request' }
+    get:
+      tags: [Requests (x-dinein)]
+      x-dinein: true
+      summary: Lista solicitações (filtros)
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/RequestStatus' }
+        - in: query
+          name: type
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/RequestType' }
+        - in: query
+          name: tableSessionId
+          schema: { type: string }
+        - in: query
+          name: since
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Solicitações
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Request' }
+
+  /v1/ext/requests/{requestId}:
+    patch:
+      tags: [Requests (x-dinein)]
+      x-dinein: true
+      summary: Atualiza solicitação (operador — acknowledge, resolve, dismiss)
+      parameters: [ { $ref: '#/components/parameters/RequestId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RequestPatch' }
+      responses:
+        '200':
+          description: Atualizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Request' }
+
+  # --- FAQ (x-dinein) ------------------------------------------------------
+  /v1/ext/faq:
+    get:
+      tags: [FAQ (x-dinein)]
+      x-dinein: true
+      summary: Lista FAQ da unidade (consumido pela tool get_faq do agente)
+      parameters:
+        - in: query
+          name: category
+          schema: { type: string }
+      responses:
+        '200':
+          description: FAQ
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FAQItem' }
+
+  # --- Daily Feature (x-dinein) --------------------------------------------
+  /v1/ext/daily-feature:
+    get:
+      tags: [Daily Feature (x-dinein)]
+      x-dinein: true
+      summary: Entradinha do dia vigente na unidade
+      responses:
+        '200':
+          description: Entradinha do dia
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DailyFeature' }
+        '404':
+          description: Sem entradinha cadastrada hoje
+
+  # --- Events stream (x-dinein, SSE) ---------------------------------------
+  /v1/ext/events/stream:
+    get:
+      tags: [Events (x-dinein)]
+      x-dinein: true
+      summary: Stream SSE de eventos operacionais para o console
+      description: |
+        Retorna `text/event-stream` (Server-Sent Events). Cada evento segue o
+        formato SSE padrão:
+
+        ```
+        id: <eventId>
+        event: <EventType>
+        data: <JSON payload>
+
+        ```
+
+        Tipos de evento: `ORDER_CREATED`, `ORDER_CONFIRMED`, `ORDER_PREPARING`,
+        `ORDER_CONCLUDED`, `ORDER_CANCELLED`, `REQUEST_CREATED`,
+        `REQUEST_ACKNOWLEDGED`, `REQUEST_RESOLVED`, `REQUEST_DISMISSED`,
+        `TABLE_OCCUPIED`, `TABLE_RELEASED`.
+
+        O cliente pode retomar a conexão enviando `Last-Event-ID` para replay
+        desde o último evento recebido (buffer de ~1h).
+      parameters:
+        - in: header
+          name: Last-Event-ID
+          schema: { type: string }
+          description: ID do último evento recebido (para reconexão).
+      responses:
+        '200':
+          description: Stream aberto
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/EventMessage' }
+
+# =============================================================================
+# Components
+# =============================================================================
+components:
+  # -------------------------------------------------------------------------
+  # Security
+  # -------------------------------------------------------------------------
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: /oauth/token
+          scopes:
+            od.all: Acesso completo à API (padrão Open Delivery)
+
+  # -------------------------------------------------------------------------
+  # Parameters
+  # -------------------------------------------------------------------------
+  parameters:
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: false
+      schema: { type: string, maxLength: 128 }
+      description: Chave de idempotência — tipicamente o `messageId` do WhatsApp.
+    SectionId:
+      in: path
+      name: sectionId
+      required: true
+      schema: { type: string }
+    ItemId:
+      in: path
+      name: itemId
+      required: true
+      schema: { type: string }
+    OrderId:
+      in: path
+      name: orderId
+      required: true
+      schema: { type: string }
+    SessionId:
+      in: path
+      name: sessionId
+      required: true
+      schema: { type: string }
+    TableId:
+      in: path
+      name: tableId
+      required: true
+      schema: { type: string }
+    RequestId:
+      in: path
+      name: requestId
+      required: true
+      schema: { type: string }
+
+  # -------------------------------------------------------------------------
+  # Common responses
+  # -------------------------------------------------------------------------
+  responses:
+    BadRequest:
+      description: Requisição inválida
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Credenciais ausentes ou inválidas
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Recurso não encontrado
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: Conflito de estado
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # -------------------------------------------------------------------------
+  # Schemas
+  # -------------------------------------------------------------------------
+  schemas:
+    # --- Errors ----------------------------------------------------------
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:    { type: string, example: VALIDATION_ERROR }
+        message: { type: string, example: "Campo 'items' é obrigatório." }
+        details: { type: object, additionalProperties: true }
+        traceId: { type: string, format: uuid }
+
+    # --- Auth ------------------------------------------------------------
+    TokenRequest:
+      type: object
+      required: [grant_type, client_id, client_secret]
+      properties:
+        grant_type:
+          type: string
+          enum: [client_credentials]
+        client_id:     { type: string }
+        client_secret: { type: string }
+        scope:         { type: string, example: od.all }
+
+    TokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in]
+      properties:
+        access_token: { type: string }
+        token_type:   { type: string, example: Bearer }
+        expires_in:   { type: integer, example: 3600 }
+        scope:        { type: string, example: od.all }
+
+    # --- Merchant (Open Delivery) ----------------------------------------
+    Merchant:
+      type: object
+      description: Entidade Open Delivery Merchant (subset relevante para dine-in).
+      required: [id, basicInfo, services]
+      properties:
+        id:         { type: string, format: uuid }
+        basicInfo:  { $ref: '#/components/schemas/BasicInfo' }
+        services:
+          type: array
+          items: { $ref: '#/components/schemas/Service' }
+        menu:       { $ref: '#/components/schemas/Menu' }
+
+    MerchantStatus:
+      type: object
+      required: [status, timestamp]
+      properties:
+        status:
+          type: string
+          enum: [OPEN, CLOSED, PAUSED]
+        timestamp: { type: string, format: date-time }
+        reason:    { type: string }
+
+    BasicInfo:
+      type: object
+      required: [name]
+      properties:
+        name:         { type: string }
+        description:  { type: string }
+        phone:        { type: string }
+        whatsapp:     { type: string }
+        website:      { type: string }
+        instagram:    { type: string }
+        address:      { $ref: '#/components/schemas/Address' }
+        timezone:     { type: string, example: America/Sao_Paulo }
+        currency:     { type: string, example: BRL }
+        locale:       { type: string, example: pt-BR }
+
+    Address:
+      type: object
+      properties:
+        street:        { type: string }
+        number:        { type: string }
+        complement:    { type: string }
+        neighborhood:  { type: string }
+        city:          { type: string }
+        state:         { type: string }
+        zipcode:       { type: string }
+        country:       { type: string, default: BR }
+        latitude:      { type: number, format: double }
+        longitude:     { type: number, format: double }
+
+    Service:
+      type: object
+      description: |
+        Service do Open Delivery com extensão `x-service-type-extension`
+        adicionando o valor `DINE_IN` ao enum.
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [DELIVERY, TAKEOUT, DINE_IN]
+          x-service-type-extension: [DINE_IN]
+        operatingHours:
+          type: array
+          items: { $ref: '#/components/schemas/OperatingHour' }
+
+    OperatingHour:
+      type: object
+      required: [dayOfWeek, open, close]
+      properties:
+        dayOfWeek:
+          type: string
+          enum: [MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY]
+        open:  { type: string, example: "08:00" }
+        close: { type: string, example: "22:00" }
+
+    # --- Catalog ---------------------------------------------------------
+    Menu:
+      type: object
+      description: Agregador do cardápio (Open Delivery).
+      properties:
+        sections:
+          type: array
+          items: { $ref: '#/components/schemas/MenuSection' }
+
+    MenuSection:
+      type: object
+      required: [id, name]
+      properties:
+        id:          { type: string }
+        name:        { type: string, example: "Brunch / Lanches" }
+        sortOrder:   { type: integer }
+        isAvailable: { type: boolean }
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/Category' }
+
+    SectionDetail:
+      allOf:
+        - $ref: '#/components/schemas/MenuSection'
+        - type: object
+          properties:
+            categories:
+              type: array
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/Category'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Item' }
+                      subcategories:
+                        type: array
+                        items: { $ref: '#/components/schemas/Subcategory' }
+
+    Category:
+      type: object
+      required: [id, name]
+      properties:
+        id:               { type: string }
+        name:             { type: string, example: "Sanduíches" }
+        sortOrder:        { type: integer }
+        isAvailable:      { type: boolean }
+        agentInstructions:
+          type: string
+          description: Instruções destinadas ao agente conversacional (ex.: "Consultar garçom para trocas.").
+
+    Subcategory:
+      type: object
+      required: [id, name]
+      properties:
+        id:         { type: string }
+        name:       { type: string, example: "Espressos" }
+        sortOrder:  { type: integer }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Item' }
+
+    Item:
+      type: object
+      required: [id, name, offer]
+      properties:
+        id:              { type: string }
+        name:            { type: string }
+        description:     { type: string }
+        imageUrl:        { type: string, format: uri }
+        ean:             { type: string }
+        isAvailable:     { type: boolean }
+        agentInstructions:
+          type: string
+        offer:           { $ref: '#/components/schemas/ItemOffer' }
+        optionGroups:
+          type: array
+          items: { $ref: '#/components/schemas/OptionGroup' }
+
+    ItemOffer:
+      type: object
+      required: [price]
+      properties:
+        price:
+          $ref: '#/components/schemas/Price'
+
+    Price:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:   { type: number, format: double, example: 29.90 }
+        currency: { type: string, example: BRL }
+
+    OptionGroup:
+      type: object
+      required: [id, name, options]
+      properties:
+        id:           { type: string }
+        name:         { type: string, example: "Ponto da carne" }
+        isMandatory:  { type: boolean }
+        minSelection: { type: integer, minimum: 0 }
+        maxSelection: { type: integer, minimum: 1 }
+        options:
+          type: array
+          items: { $ref: '#/components/schemas/Option' }
+
+    Option:
+      type: object
+      required: [id, name]
+      properties:
+        id:          { type: string }
+        name:        { type: string, example: "Ao ponto" }
+        priceDelta:  { $ref: '#/components/schemas/Price' }
+        isAvailable: { type: boolean }
+
+    # --- Orders ----------------------------------------------------------
+    OrderStatusDineIn:
+      type: string
+      description: |
+        Subset de estados Open Delivery aplicáveis a dine-in. Os estados
+        específicos de entrega (DISPATCHED, DELIVERED, PICKED_UP etc.) são
+        substituídos por `CONCLUDED` (servido na mesa).
+      enum: [CREATED, CONFIRMED, PREPARING, CONCLUDED, CANCELLED]
+
+    OrderCreateRequest:
+      type: object
+      required: [items]
+      x-dinein: true
+      properties:
+        tableSessionId:
+          type: string
+          description: Sessão de mesa (obrigatório para dine-in).
+        agentHubConversationId: { type: string }
+        agentHubMessageId:      { type: string }
+        notes:                  { type: string }
+        items:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/OrderItemCreate' }
+
+    OrderItemCreate:
+      type: object
+      required: [menuItemId, quantity]
+      properties:
+        menuItemId:    { type: string }
+        quantity:      { type: integer, minimum: 1 }
+        observations:  { type: string }
+        selectedOptions:
+          type: array
+          items: { $ref: '#/components/schemas/SelectedOption' }
+
+    SelectedOption:
+      type: object
+      required: [optionGroupId, optionId]
+      properties:
+        optionGroupId: { type: string }
+        optionId:      { type: string }
+
+    Order:
+      type: object
+      required: [id, status, items, subtotal, total, createdAt]
+      properties:
+        id:                     { type: string }
+        unitId:                 { type: string }
+        tableSessionId:         { type: string }
+        tableNumber:            { type: string }
+        agentHubConversationId: { type: string }
+        agentHubMessageId:      { type: string }
+        idempotencyKey:         { type: string }
+        status:                 { $ref: '#/components/schemas/OrderStatusDineIn' }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OrderItem' }
+        subtotal:               { $ref: '#/components/schemas/Price' }
+        total:                  { $ref: '#/components/schemas/Price' }
+        notes:                  { type: string }
+        cancellationReason:     { type: string }
+        createdAt:              { type: string, format: date-time }
+        confirmedAt:            { type: string, format: date-time }
+        preparingAt:            { type: string, format: date-time }
+        concludedAt:            { type: string, format: date-time }
+        cancelledAt:            { type: string, format: date-time }
+
+    OrderItem:
+      type: object
+      required: [menuItemId, itemName, quantity, unitPrice, totalPrice]
+      properties:
+        id:              { type: string }
+        menuItemId:      { type: string }
+        itemName:        { type: string }
+        quantity:        { type: integer }
+        unitPrice:       { $ref: '#/components/schemas/Price' }
+        totalPrice:      { $ref: '#/components/schemas/Price' }
+        observations:    { type: string }
+        selectedOptions:
+          type: array
+          items: { $ref: '#/components/schemas/SelectedOptionSnapshot' }
+
+    SelectedOptionSnapshot:
+      type: object
+      required: [optionGroupName, optionName]
+      properties:
+        optionGroupName: { type: string }
+        optionName:      { type: string }
+        priceDelta:      { $ref: '#/components/schemas/Price' }
+
+    # --- Sessions (x-dinein) ---------------------------------------------
+    SessionStartRequest:
+      type: object
+      required: [tableQrToken]
+      x-dinein: true
+      properties:
+        tableQrToken:           { type: string }
+        customerPhone:          { type: string }
+        agentHubConversationId: { type: string }
+
+    TableSession:
+      type: object
+      x-dinein: true
+      required: [id, unitId, tableId, status, startedAt]
+      properties:
+        id:                      { type: string }
+        unitId:                  { type: string }
+        tableId:                 { type: string }
+        tableNumber:             { type: string }
+        agentHubConversationId:  { type: string }
+        customerPhone:           { type: string }
+        status:
+          type: string
+          enum: [ACTIVE, CLOSED, ABANDONED]
+        startedAt:               { type: string, format: date-time }
+        endedAt:                 { type: string, format: date-time }
+
+    # --- Tables (x-dinein) -----------------------------------------------
+    TableStatus:
+      type: string
+      enum: [AVAILABLE, OCCUPIED, RESERVED, DISABLED]
+
+    Table:
+      type: object
+      x-dinein: true
+      required: [id, unitId, number, status]
+      properties:
+        id:       { type: string }
+        unitId:   { type: string }
+        number:   { type: string, example: "12" }
+        label:    { type: string, example: "Mesa do jardim" }
+        status:   { $ref: '#/components/schemas/TableStatus' }
+        qrToken:  { type: string, description: "Token opaco usado na URL do QR code." }
+
+    # --- Requests (x-dinein) ---------------------------------------------
+    RequestType:
+      type: string
+      enum:
+        - CALL_WAITER
+        - PHYSICAL_MENU
+        - CHECK
+        - COMPLAINT
+        - ORDER_CHANGE
+        - ORDER_STATUS
+        - ORDER_CANCEL
+        - ALLERGY_INFO
+        - CUSTOM_ITEM
+        - OTHER
+
+    RequestStatus:
+      type: string
+      enum: [OPEN, IN_PROGRESS, RESOLVED, DISMISSED]
+
+    RequestCreate:
+      type: object
+      x-dinein: true
+      required: [tableSessionId, type, description]
+      properties:
+        tableSessionId:         { type: string }
+        agentHubConversationId: { type: string }
+        agentHubMessageId:      { type: string }
+        type:                   { $ref: '#/components/schemas/RequestType' }
+        description:            { type: string }
+
+    RequestPatch:
+      type: object
+      x-dinein: true
+      properties:
+        status:             { $ref: '#/components/schemas/RequestStatus' }
+        assignedToEmployeeId: { type: string }
+        resolutionNotes:    { type: string }
+
+    Request:
+      type: object
+      x-dinein: true
+      required: [id, unitId, type, description, status, createdAt]
+      properties:
+        id:                      { type: string }
+        unitId:                  { type: string }
+        tableSessionId:          { type: string }
+        tableNumber:             { type: string }
+        agentHubConversationId:  { type: string }
+        agentHubMessageId:       { type: string }
+        type:                    { $ref: '#/components/schemas/RequestType' }
+        description:             { type: string }
+        status:                  { $ref: '#/components/schemas/RequestStatus' }
+        assignedToEmployeeId:    { type: string }
+        resolvedByEmployeeId:    { type: string }
+        resolutionNotes:         { type: string }
+        createdAt:               { type: string, format: date-time }
+        acknowledgedAt:          { type: string, format: date-time }
+        resolvedAt:              { type: string, format: date-time }
+
+    # --- FAQ (x-dinein) --------------------------------------------------
+    FAQItem:
+      type: object
+      x-dinein: true
+      required: [id, category, question, answer]
+      properties:
+        id:         { type: string }
+        category:   { type: string, example: "Como identificar a mesa/comanda" }
+        question:   { type: string }
+        answer:     { type: string }
+        sortOrder:  { type: integer }
+
+    # --- Daily Feature (x-dinein) ----------------------------------------
+    DailyFeature:
+      type: object
+      x-dinein: true
+      required: [date, name]
+      properties:
+        date:        { type: string, format: date }
+        name:        { type: string, example: "Bruschetta de tomate com manjericão" }
+        description: { type: string }
+
+    # --- Events (SSE, x-dinein) ------------------------------------------
+    EventMessage:
+      type: object
+      x-dinein: true
+      description: |
+        Representação semântica de um evento no stream SSE. No wire format SSE,
+        o `id` vai no campo `id:`, o `type` no campo `event:` e `payload` no
+        campo `data:` como JSON.
+      required: [id, type, payload, timestamp]
+      properties:
+        id:        { type: string }
+        type:
+          type: string
+          enum:
+            - ORDER_CREATED
+            - ORDER_CONFIRMED
+            - ORDER_PREPARING
+            - ORDER_CONCLUDED
+            - ORDER_CANCELLED
+            - REQUEST_CREATED
+            - REQUEST_ACKNOWLEDGED
+            - REQUEST_RESOLVED
+            - REQUEST_DISMISSED
+            - TABLE_OCCUPIED
+            - TABLE_RELEASED
+            - MENU_UPDATED
+            - DAILY_FEATURE_UPDATED
+        payload:   { type: object, additionalProperties: true }
+        timestamp: { type: string, format: date-time }
