@@ -85,7 +85,7 @@ echo.
 echo  [5/5] Verificando se o app subiu corretamente...
 timeout /t 10 /nobreak >nul
 
-ssh %VPS_USER%@%VPS_IP% "curl -sf -o /dev/null -w %%{http_code} http://localhost:3003/ 2>/dev/null" > %TEMP%\vw_hcheck.txt 2>&1
+ssh %VPS_USER%@%VPS_IP% "curl -sf -o /dev/null -w %%{http_code} http://localhost:3004/ 2>/dev/null" > %TEMP%\vw_hcheck.txt 2>&1
 set /p HTTP_CODE=<%TEMP%\vw_hcheck.txt
 
 if "%HTTP_CODE%"=="200" (
