@@ -55,7 +55,7 @@ export async function emitEvent(input: EmitInput): Promise<BroadcastEvent> {
       type: input.type,
       entityType: input.entityType,
       entityId: input.entityId,
-      payload: input.payload,
+      payload: input.payload as object,
     },
   });
   const ev: BroadcastEvent = {
