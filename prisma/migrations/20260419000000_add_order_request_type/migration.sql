@@ -1,0 +1,1 @@
+ALTER TYPE "RequestType" ADD VALUE 'ORDER';

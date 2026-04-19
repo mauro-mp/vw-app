@@ -407,6 +407,7 @@ enum OrderStatus {
 }
 
 enum RequestType {
+  ORDER
   CALL_WAITER
   PHYSICAL_MENU
   CHECK

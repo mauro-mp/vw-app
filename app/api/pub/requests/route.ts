@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { resolveUnit, unauthorized, corsHeaders } from "../_auth";
 
 const RequestTypeEnum = z.enum([
+  "ORDER",
   "CALL_WAITER",
   "PHYSICAL_MENU",
   "CHECK",

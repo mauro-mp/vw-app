@@ -60,6 +60,7 @@ export async function GET(req: NextRequest) {
           name: it.name,
           description: it.description ?? undefined,
           price: Number(it.basePrice),
+          imageUrl: it.imageUrl ?? undefined,
           agentInstructions: it.agentInstructions ?? undefined,
         })),
         subcategories: cat.subcategories.map((sub) => ({
@@ -69,6 +70,7 @@ export async function GET(req: NextRequest) {
             name: it.name,
             description: it.description ?? undefined,
             price: Number(it.basePrice),
+            imageUrl: it.imageUrl ?? undefined,
             agentInstructions: it.agentInstructions ?? undefined,
           })),
         })),
