@@ -51,7 +51,7 @@ function imageUrl(v: string): string | null {
 
 async function main() {
   // ── Carrega e parseia o arquivo ────────────────────────────────────────────
-  const filePath = "C:\\Users\\mauro\\OneDrive\\Desktop\\Menu Fillmore.txt";
+  const filePath = path.resolve(process.cwd(), "prisma", "Menu Fillmore.txt");
   const raw = readFileSync(filePath, "utf-8");
   // Remove "const items = " do início e parseia como JSON
   const start = raw.indexOf("[");
