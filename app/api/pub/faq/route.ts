@@ -10,16 +10,18 @@ export async function GET(req: NextRequest) {
   const q = searchParams.get("q")?.trim() || null;
   const categoryFilter = searchParams.get("category")?.trim() || null;
 
+  const tokens = q ? q.split(/\s+/).map((t) => t.trim()).filter((t) => t.length >= 2) : [];
+
   const items = await prisma.fAQItem.findMany({
     where: {
       unitId: unit.id,
       isPublished: true,
       ...(categoryFilter ? { category: { contains: categoryFilter, mode: "insensitive" } } : {}),
-      ...(q ? {
-        OR: [
-          { question: { contains: q, mode: "insensitive" } },
-          { answer: { contains: q, mode: "insensitive" } },
-        ],
+      ...(tokens.length > 0 ? {
+        OR: tokens.flatMap((t) => [
+          { question: { contains: t, mode: "insensitive" as const } },
+          { answer: { contains: t, mode: "insensitive" as const } },
+        ]),
       } : {}),
     },
     orderBy: [{ category: "asc" }, { sortOrder: "asc" }],
