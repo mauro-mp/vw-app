@@ -33,12 +33,20 @@ echo.
 
 :: ── 3. Dev server + browser ───────────────────────────────────────────────
 echo  [3/3] Iniciando servidor...
+
+:: Encerra instâncias anteriores do dev server na porta 3001
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":3001 " ^| findstr "LISTENING"') do (
+  taskkill /PID %%p /F >nul 2>&1
+)
+:: Aguarda liberar a porta
+timeout /t 2 /nobreak >nul
+
 echo.
 echo   http://localhost:3001
 echo   Login: admin@fillmore.com.br / senha1234
 echo.
 
 set PORT=3001
-start "VW App" cmd /k "cd /d "%~dp0" && npm run dev"
+start "VW App" cmd /k "cd /d "%~dp0" && set PORT=3001 && npm run dev"
 timeout /t 6 /nobreak >nul
-rundll32 url.dll,FileProtocolHandler http://localhost:3001
+start "" "http://localhost:3001"
