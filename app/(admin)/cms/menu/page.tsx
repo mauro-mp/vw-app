@@ -12,11 +12,17 @@ import {
   deleteSubcategory,
   createItemAndEdit,
 } from "./actions";
+import { MenuPdfUpload } from "./MenuPdfUpload";
 
 export const dynamic = "force-dynamic";
 
 export default async function MenuPage() {
   const ctx = await requireAdmin();
+
+  const unit = await prisma.unit.findUnique({
+    where: { id: ctx.activeUnitId },
+    select: { menuPdfUrl: true },
+  });
 
   const sections = await prisma.menuSection.findMany({
     where: { unitId: ctx.activeUnitId },
@@ -46,12 +52,16 @@ export default async function MenuPage() {
 
   return (
     <div className="max-w-5xl space-y-6">
-      <header className="flex items-start justify-between">
+      <header className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold">Cardápio</h1>
           <p className="text-sm text-[color:var(--muted)]">
             Estrutura em três níveis: seção → categoria → (opcional) subcategoria → item.
           </p>
+        </div>
+        <div className="flex flex-col gap-1 items-end">
+          <span className="text-xs text-[color:var(--muted)]">Cardápio em PDF</span>
+          <MenuPdfUpload currentUrl={unit?.menuPdfUrl ?? null} />
         </div>
       </header>
 

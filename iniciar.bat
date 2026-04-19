@@ -1,61 +1,44 @@
 @echo off
 cd /d "%~dp0"
-title VW App
+title VW App — Local
 
-echo Iniciando VW App...
+echo.
+echo  =============================================
+echo   VW App - Iniciar ambiente local
+echo  =============================================
 echo.
 
-if not exist ".env.local" (
-  echo ERRO: .env.local nao encontrado.
-  echo Copie .env.example para .env.local e preencha as variaveis.
-  pause
-  exit /b 1
-)
-
-docker info >nul 2>&1
-if errorlevel 1 (
-  echo ERRO: Docker nao esta rodando. Inicie o Docker Desktop.
-  pause
-  exit /b 1
-)
-
-echo [1/4] Subindo banco de dados PostgreSQL...
+:: ── 1. Banco de dados ─────────────────────────────────────────────────────
+echo  [1/3] Subindo PostgreSQL...
 docker compose up -d postgres
+if %ERRORLEVEL% NEQ 0 (
+  echo  [ERRO] Docker nao esta rodando. Inicie o Docker Desktop.
+  pause & exit /b 1
+)
 
-echo Aguardando PostgreSQL ficar pronto...
 :wait_db
-docker compose exec -T postgres pg_isready -U vwapp -d vwapp >nul 2>&1
+docker compose exec -T postgres pg_isready -U postgres -d vwapp >nul 2>&1
 if errorlevel 1 (
   timeout /t 2 /nobreak >nul
   goto wait_db
 )
-echo PostgreSQL pronto.
+echo  [OK] PostgreSQL pronto.
 echo.
 
-if not exist "node_modules" (
-  echo [2/4] Instalando dependencias...
-  npm install
-) else (
-  echo [2/4] Dependencias OK.
-)
+:: ── 2. Schema ─────────────────────────────────────────────────────────────
+echo  [2/3] Sincronizando schema...
+npx prisma db push --skip-generate >nul 2>&1
+echo  [OK] Schema sincronizado.
 echo.
 
-echo [3/4] Aplicando migrations...
-npx prisma migrate deploy
-if errorlevel 1 (
-  npx prisma db push
-)
+:: ── 3. Dev server + browser ───────────────────────────────────────────────
+echo  [3/3] Iniciando servidor...
 echo.
-
-set /p SEED_CHOICE=[4/4] Popular banco com dados do Fillmore? (S/N):
-if /i "%SEED_CHOICE%"=="S" (
-  npm run seed
-)
-echo.
-
-echo Servidor disponivel em http://localhost:3001
-echo Console operacional em http://localhost:3001/ops
+echo   http://localhost:3001
+echo   Login: admin@fillmore.com.br / senha1234
 echo.
 
 set PORT=3001
-npm run dev
+start "VW App" cmd /k "cd /d "%~dp0" && npm run dev"
+timeout /t 6 /nobreak >nul
+rundll32 url.dll,FileProtocolHandler http://localhost:3001

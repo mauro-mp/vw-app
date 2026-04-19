@@ -117,6 +117,19 @@ export async function deleteSubcategory(subcategoryId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// PDF do cardápio
+// ---------------------------------------------------------------------------
+
+export async function removeMenuPdf() {
+  const ctx = await requireAdmin();
+  await prisma.unit.updateMany({
+    where: { id: ctx.activeUnitId },
+    data: { menuPdfUrl: null },
+  });
+  revalidatePath("/cms/menu");
+}
+
+// ---------------------------------------------------------------------------
 // Redirect helpers (create-and-edit pattern)
 // ---------------------------------------------------------------------------
 
