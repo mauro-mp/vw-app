@@ -10,18 +10,32 @@ export async function GET(req: NextRequest) {
   const sectionFilter = searchParams.get("section")?.trim() || null;
   const categoryFilter = searchParams.get("category")?.trim() || null;
 
+  // Tenta primeiro por seção; se não encontrar nada, trata o sectionFilter como categoria
+  let effectiveSectionFilter = sectionFilter;
+  let effectiveCategoryFilter = categoryFilter;
+
+  if (sectionFilter && !categoryFilter) {
+    const sectionExists = await prisma.menuSection.count({
+      where: { unitId: unit.id, isAvailable: true, name: { contains: sectionFilter, mode: "insensitive" } },
+    });
+    if (sectionExists === 0) {
+      effectiveSectionFilter = null;
+      effectiveCategoryFilter = sectionFilter;
+    }
+  }
+
   const sections = await prisma.menuSection.findMany({
     where: {
       unitId: unit.id,
       isAvailable: true,
-      ...(sectionFilter ? { name: { contains: sectionFilter, mode: "insensitive" } } : {}),
+      ...(effectiveSectionFilter ? { name: { contains: effectiveSectionFilter, mode: "insensitive" } } : {}),
     },
     orderBy: { sortOrder: "asc" },
     include: {
       categories: {
         where: {
           isAvailable: true,
-          ...(categoryFilter ? { name: { contains: categoryFilter, mode: "insensitive" } } : {}),
+          ...(effectiveCategoryFilter ? { name: { contains: effectiveCategoryFilter, mode: "insensitive" } } : {}),
         },
         orderBy: { sortOrder: "asc" },
         include: {
