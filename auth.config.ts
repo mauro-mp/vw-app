@@ -44,6 +44,7 @@ export const authConfig: NextAuthConfig = {
       if (pathname.startsWith("/login")) return true;
       if (pathname.startsWith("/api/auth")) return true;
       if (pathname.startsWith("/api/health")) return true;
+      if (pathname.startsWith("/api/pub/")) return true;
       if (pathname.startsWith("/oauth/token")) return true;
       if (pathname.startsWith("/v1/")) return true; // protegidas por OAuth2, não NextAuth
       if (pathname === "/") return true;
