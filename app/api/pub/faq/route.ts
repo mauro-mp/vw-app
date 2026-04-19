@@ -6,13 +6,26 @@ export async function GET(req: NextRequest) {
   const unit = await resolveUnit(req);
   if (!unit) return unauthorized();
 
+  const { searchParams } = new URL(req.url);
+  const q = searchParams.get("q")?.trim() || null;
+  const categoryFilter = searchParams.get("category")?.trim() || null;
+
   const items = await prisma.fAQItem.findMany({
-    where: { unitId: unit.id, isPublished: true },
+    where: {
+      unitId: unit.id,
+      isPublished: true,
+      ...(categoryFilter ? { category: { contains: categoryFilter, mode: "insensitive" } } : {}),
+      ...(q ? {
+        OR: [
+          { question: { contains: q, mode: "insensitive" } },
+          { answer: { contains: q, mode: "insensitive" } },
+        ],
+      } : {}),
+    },
     orderBy: [{ category: "asc" }, { sortOrder: "asc" }],
     select: { category: true, question: true, answer: true },
   });
 
-  // Agrupa por categoria
   const grouped: Record<string, { question: string; answer: string }[]> = {};
   for (const item of items) {
     if (!grouped[item.category]) grouped[item.category] = [];
