@@ -96,6 +96,9 @@ export function itemDto(item: MenuItemFull) {
     ean: item.ean ?? undefined,
     isAvailable: item.isAvailable,
     agentInstructions: item.agentInstructions ?? undefined,
+    portion: item.portion ?? undefined,
+    badges: item.badges ?? undefined,
+    constraints: item.constraints ?? undefined,
     offer: { price: priceOf(item.basePrice) },
     optionGroups: item.optionGroups
       .slice()

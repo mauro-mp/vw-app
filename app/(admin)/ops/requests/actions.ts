@@ -1,6 +1,7 @@
 "use server";
 
 import type { RequestStatus, EventLogType } from "@prisma/client";
+import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/cms/context";
 import { prisma } from "@/lib/prisma";
 import { emitEvent } from "@/lib/events";
@@ -57,4 +58,21 @@ export async function resolveRequest(requestId: string, formData: FormData) {
 }
 export async function dismissRequest(requestId: string) {
   await setStatus(requestId, "DISMISSED");
+}
+
+export async function deleteRequest(requestId: string) {
+  const ctx = await requireStaff();
+  await prisma.request.deleteMany({
+    where: { id: requestId, unitId: ctx.activeUnitId },
+  });
+  revalidatePath("/ops/requests");
+}
+
+export async function deleteRequests(ids: string[]) {
+  if (!ids.length) return;
+  const ctx = await requireStaff();
+  await prisma.request.deleteMany({
+    where: { id: { in: ids }, unitId: ctx.activeUnitId },
+  });
+  revalidatePath("/ops/requests");
 }

@@ -1,39 +1,18 @@
 import Link from "next/link";
 import { signOut } from "@/auth";
 import type { EmployeeRole } from "@prisma/client";
+import { UtensilsCrossed, HelpCircle, Bell, LogOut } from "lucide-react";
 
-type NavItem = { href: string; label: string; roles?: EmployeeRole[]; stub?: boolean };
+type NavItem = {
+  href: string;
+  label: string;
+  Icon: React.ComponentType<{ size?: number }>;
+};
 
-const NAV: Array<{ group: string; items: NavItem[] }> = [
-  {
-    group: "",
-    items: [{ href: "/dashboard", label: "Dashboard" }],
-  },
-  {
-    group: "Operacional",
-    items: [
-      { href: "/ops/orders", label: "Pedidos" },
-      { href: "/ops/requests", label: "Solicitações" },
-      { href: "/ops/tables", label: "Mesas" },
-    ],
-  },
-  {
-    group: "Cadastros",
-    items: [
-      { href: "/cms/menu", label: "Cardápio", roles: ["ADMIN"] },
-      { href: "/cms/option-groups", label: "Option groups", roles: ["ADMIN"] },
-      { href: "/cms/faq", label: "FAQ", roles: ["ADMIN"] },
-      { href: "/cms/daily-feature", label: "Entradinha", roles: ["ADMIN"] },
-    ],
-  },
-  {
-    group: "Administração",
-    items: [
-      { href: "/admin/employees", label: "Staff", roles: ["ADMIN"] },
-      { href: "/admin/units", label: "Unidades", roles: ["ADMIN"] },
-      { href: "/admin/integrations", label: "Integrações", roles: ["ADMIN"] },
-    ],
-  },
+const NAV: NavItem[] = [
+  { href: "/cms/menu",     label: "Cardápio",    Icon: UtensilsCrossed },
+  { href: "/cms/faq",      label: "FAQ",          Icon: HelpCircle },
+  { href: "/ops/requests", label: "Solicitações", Icon: Bell },
 ];
 
 async function logoutAction() {
@@ -51,58 +30,57 @@ export function Sidebar({
   unitName: string;
 }) {
   return (
-    <aside className="w-60 border-r border-[color:var(--border)] flex flex-col min-h-screen">
-      <div className="p-4 border-b border-[color:var(--border)]">
-        <div className="font-bold">VW app</div>
-        <div className="text-xs text-[color:var(--muted)] mt-0.5">{unitName}</div>
+    <aside
+      className="w-56 flex flex-col min-h-screen shrink-0"
+      style={{ borderRight: "1px solid var(--border)" }}
+    >
+      {/* Brand */}
+      <div className="px-5 py-5" style={{ borderBottom: "1px solid var(--border)" }}>
+        <div
+          className="text-xs font-black uppercase tracking-widest"
+          style={{ color: "var(--primary)" }}
+        >
+          VW
+        </div>
+        <div className="text-sm font-semibold mt-0.5" style={{ color: "var(--foreground)" }}>
+          {unitName}
+        </div>
       </div>
 
-      <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
-        {NAV.map((group) => (
-          <div key={group.group}>
-            {group.group ? (
-              <div className="text-xs uppercase tracking-wide text-[color:var(--muted)] mb-1 px-2">
-                {group.group}
-              </div>
-            ) : null}
-            <ul className="space-y-0.5">
-              {group.items
-                .filter((it) => !it.roles || it.roles.includes(role))
-                .map((it) => (
-                  <li key={it.href}>
-                    <Link
-                      href={it.stub ? "#" : it.href}
-                      className={`block px-2 py-1.5 text-sm rounded-md hover:bg-[color:var(--border)] ${
-                        it.stub ? "text-[color:var(--muted)] cursor-not-allowed" : ""
-                      }`}
-                      aria-disabled={it.stub}
-                    >
-                      {it.label}
-                      {it.stub ? (
-                        <span className="text-[10px] ml-1 align-middle text-[color:var(--muted)]">
-                          (em breve)
-                        </span>
-                      ) : null}
-                    </Link>
-                  </li>
-                ))}
-            </ul>
-          </div>
+      {/* Nav links */}
+      <nav className="flex-1 px-3 py-4 space-y-0.5">
+        {NAV.map(({ href, label, Icon }) => (
+          <Link
+            key={href}
+            href={href}
+            className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-all"
+            style={{ color: "var(--foreground)", textDecoration: "none" }}
+          >
+            <span style={{ color: "var(--primary)", flexShrink: 0, display: "flex" }}>
+              <Icon size={16} />
+            </span>
+            {label}
+          </Link>
         ))}
       </nav>
 
-      <div className="p-3 border-t border-[color:var(--border)]">
-        <div className="text-xs mb-2">
-          <div className="font-medium">{employeeName}</div>
-          <div className="text-[color:var(--muted)]">
-            <code className="text-[10px]">{role}</code>
+      {/* Footer */}
+      <div className="px-3 pb-4" style={{ borderTop: "1px solid var(--border)", paddingTop: "12px" }}>
+        <div className="px-3 mb-3">
+          <div className="text-xs font-medium" style={{ color: "var(--foreground)" }}>
+            {employeeName}
+          </div>
+          <div className="text-[10px]" style={{ color: "var(--muted)" }}>
+            {role}
           </div>
         </div>
         <form action={logoutAction}>
           <button
             type="submit"
-            className="w-full text-xs border border-[color:var(--border)] rounded-md py-1.5 hover:bg-[color:var(--border)]"
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm"
+            style={{ color: "var(--muted)", cursor: "pointer" }}
           >
+            <LogOut size={14} />
             Sair
           </button>
         </form>

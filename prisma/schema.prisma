@@ -177,6 +177,9 @@ model MenuItem {
   sortOrder         Int                   @default(0)
   ean               String?
   agentInstructions String?
+  portion           String?
+  badges            String?
+  constraints       String?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   category          MenuCategory          @relation(fields: [categoryId], references: [id], onDelete: Cascade)

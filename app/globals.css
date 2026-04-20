@@ -1,14 +1,16 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #0a0a0a;
-  --muted: #6b7280;
-  --border: #e5e7eb;
-  --primary: #0ea5e9;
-  --primary-foreground: #ffffff;
-  --accent: #f59e0b;
-  --destructive: #dc2626;
+  --background: #1C1008;
+  --foreground: #F5EDD8;
+  --muted: rgba(245, 237, 216, 0.45);
+  --border: rgba(255, 255, 255, 0.10);
+  --surface: rgba(255, 255, 255, 0.07);
+  --primary: #C4580A;
+  --primary-foreground: #F5EDD8;
+  --accent: #C4580A;
+  --destructive: #ef4444;
+  --destructive-foreground: #fca5a5;
 }
 
 @theme inline {
@@ -16,6 +18,7 @@
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-border: var(--border);
+  --color-surface: var(--surface);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-accent: var(--accent);
@@ -24,17 +27,12 @@
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #fafafa;
-    --muted: #9ca3af;
-    --border: #262626;
-  }
-}
-
 html, body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
 }
+
+/* Scrollbar escondida */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
