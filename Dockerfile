@@ -13,6 +13,9 @@ ENV NEXTAUTH_SECRET="build-secret-placeholder-32-chars-min"
 ENV NEXTAUTH_URL="http://localhost:3001"
 ENV ENCRYPTION_KEY="0000000000000000000000000000000000000000000000000000000000000000"
 ENV OAUTH_JWT_SECRET="build-oauth-secret-placeholder-32-chars"
+# Chave fixa para Server Actions — mantém IDs estáveis entre deploys,
+# evita "Failed to find Server Action" quando o cliente tem HTML antigo em cache.
+ENV NEXT_SERVER_ACTIONS_ENCRYPTION_KEY="N3tIdd/gO505hl65hO/DsG/x4TEapHCjzh2AUr12Y08="
 RUN npm run build
 
 FROM node:22-alpine AS runner
