@@ -6,7 +6,7 @@
     "noEmit": false,
     "jsx": "preserve"
   },
-  "include": ["prisma/**/*.ts", "lib/**/*.ts"],
+  "include": ["prisma/**/*.ts", "lib/**/*.ts", "scripts/**/*.ts"],
   "ts-node": {
     "transpileOnly": true
   }
