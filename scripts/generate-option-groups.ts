@@ -116,6 +116,63 @@ Formato de saída (exemplo):
 
 // ---------------------------------------------------------------------------
 
+function normalize(s: string): string {
+  return s.trim().toLowerCase();
+}
+
+/**
+ * Busca um OptionGroup existente com mesma identidade (unit + nome + regras +
+ * conjunto de opções). Se encontrar, reutiliza — senão cria um novo.
+ *
+ * Identidade = (unitId, name normalizado, isMandatory, min, max, opções ordenadas).
+ */
+async function findOrCreateOptionGroup(
+  unitId: string,
+  g: ParsedGroup
+): Promise<{ id: string; _reused: boolean }> {
+  const candidates = await prisma.optionGroup.findMany({
+    where: {
+      unitId,
+      isMandatory: g.isMandatory,
+      minSelection: g.minSelection,
+      maxSelection: g.maxSelection,
+    },
+    include: { options: { select: { name: true } } },
+  });
+
+  const wantName = normalize(g.name);
+  const wantOpts = g.options.map(normalize).sort().join("|");
+
+  for (const c of candidates) {
+    if (normalize(c.name) !== wantName) continue;
+    const haveOpts = c.options.map((o) => normalize(o.name)).sort().join("|");
+    if (haveOpts === wantOpts) {
+      return { id: c.id, _reused: true };
+    }
+  }
+
+  const created = await prisma.optionGroup.create({
+    data: {
+      unitId,
+      name: g.name,
+      isMandatory: g.isMandatory,
+      minSelection: g.minSelection,
+      maxSelection: g.maxSelection,
+      options: {
+        create: g.options.map((name, idx) => ({
+          name,
+          priceDelta: 0,
+          isAvailable: true,
+          sortOrder: idx,
+        })),
+      },
+    },
+  });
+  return { id: created.id, _reused: false };
+}
+
+// ---------------------------------------------------------------------------
+
 async function main() {
   const whereClause = ONLY_ITEM
     ? { id: ONLY_ITEM }
@@ -162,37 +219,26 @@ async function main() {
       continue;
     }
 
-    // Persiste cada grupo e vincula ao item
+    // Persiste cada grupo e vincula ao item — reutiliza grupos equivalentes
     for (let i = 0; i < groups.length; i++) {
       const g = groups[i];
 
-      const og = await prisma.optionGroup.create({
-        data: {
-          unitId,
-          name: g.name,
-          isMandatory: g.isMandatory,
-          minSelection: g.minSelection,
-          maxSelection: g.maxSelection,
-          options: {
-            create: g.options.map((name, idx) => ({
-              name,
-              priceDelta: 0,
-              isAvailable: true,
-              sortOrder: idx,
-            })),
-          },
-        },
-      });
+      const og = await findOrCreateOptionGroup(unitId, g);
 
-      await prisma.menuItemOptionGroup.create({
-        data: {
+      // Idempotente: se o vínculo já existe, apenas atualiza sortOrder
+      await prisma.menuItemOptionGroup.upsert({
+        where: {
+          menuItemId_optionGroupId: { menuItemId: item.id, optionGroupId: og.id },
+        },
+        create: {
           menuItemId: item.id,
           optionGroupId: og.id,
           sortOrder: i,
         },
+        update: { sortOrder: i },
       });
 
-      console.log(`   ✅ OptionGroup "${og.id}" criado e vinculado.`);
+      console.log(`   ✅ OptionGroup "${og.id}" (${og._reused ? "reutilizado" : "novo"}) vinculado.`);
     }
 
     console.log();

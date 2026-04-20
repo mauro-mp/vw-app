@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, useTransition } from "react";
 import { Trash2 } from "lucide-react";
 import { useEventStream, type SseEvent } from "@/lib/ops/use-event-stream";
 import { deleteRequest, deleteRequests } from "./actions";
@@ -47,7 +47,8 @@ function fmtDate(iso: string) {
 export function RequestsLiveInbox({ initial }: { initial: RequestView[] }) {
   const [requests, setRequests] = useState<RequestView[]>(initial);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
 
   const onEvent = useCallback((ev: SseEvent) => {
     if (ev.entityType !== "Request") return;
@@ -66,78 +67,105 @@ export function RequestsLiveInbox({ initial }: { initial: RequestView[] }) {
   useEventStream("/ops/api/events/stream", onEvent);
 
   const allChecked = requests.length > 0 && selected.size === requests.length;
+  const hasSelection = selected.size > 0;
 
-  const toggleAll = () =>
-    setSelected(allChecked ? new Set() : new Set(requests.map((r) => r.id)));
+  const toggleAll = () => {
+    setSelected((prev) => {
+      if (prev.size === requests.length) return new Set();
+      return new Set(requests.map((r) => r.id));
+    });
+  };
 
   const toggleOne = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
 
-  const handleDeleteOne = async (id: string) => {
-    setBusy(true);
-    await deleteRequest(id);
-    setRequests((prev) => prev.filter((r) => r.id !== id));
-    setSelected((prev) => { const n = new Set(prev); n.delete(id); return n; });
-    setBusy(false);
+  const handleDeleteOne = (id: string) => {
+    if (!confirm("Excluir esta solicitação?")) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        await deleteRequest(id);
+        setRequests((prev) => prev.filter((r) => r.id !== id));
+        setSelected((prev) => {
+          const n = new Set(prev);
+          n.delete(id);
+          return n;
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Erro ao excluir");
+      }
+    });
   };
 
-  const handleDeleteSelected = async () => {
+  const handleDeleteSelected = () => {
     if (!selected.size) return;
-    setBusy(true);
+    const count = selected.size;
+    if (!confirm(`Excluir ${count} solicitaç${count === 1 ? "ão" : "ões"}?`)) return;
+    setError(null);
     const ids = Array.from(selected);
-    await deleteRequests(ids);
-    setRequests((prev) => prev.filter((r) => !ids.includes(r.id)));
-    setSelected(new Set());
-    setBusy(false);
+    startTransition(async () => {
+      try {
+        await deleteRequests(ids);
+        setRequests((prev) => prev.filter((r) => !ids.includes(r.id)));
+        setSelected(new Set());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Erro ao excluir");
+      }
+    });
   };
 
   return (
     <div className="space-y-3">
-      {/* Barra de ações em massa */}
+      {/* Barra de ações em massa — layout estável */}
       <div
         className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm"
         style={{
           background: "var(--surface)",
           border: "1px solid var(--border)",
-          minHeight: "40px",
+          minHeight: "44px",
         }}
       >
         <input
           type="checkbox"
           checked={allChecked}
           onChange={toggleAll}
-          disabled={requests.length === 0}
-          className="rounded"
-          style={{ accentColor: "var(--primary)" }}
+          disabled={requests.length === 0 || isPending}
+          className="rounded cursor-pointer"
+          style={{ accentColor: "var(--primary)", width: 16, height: 16 }}
         />
-        {selected.size > 0 ? (
-          <>
-            <span style={{ color: "var(--muted)" }}>
-              {selected.size} selecionada{selected.size > 1 ? "s" : ""}
+        <span style={{ color: "var(--muted)" }}>
+          {hasSelection
+            ? `${selected.size} selecionada${selected.size > 1 ? "s" : ""}`
+            : `${requests.length} solicitaç${requests.length === 1 ? "ão" : "ões"}`}
+        </span>
+
+        <div className="ml-auto flex items-center gap-2">
+          {error && (
+            <span className="text-xs" style={{ color: "#fca5a5" }}>
+              {error}
             </span>
-            <button
-              onClick={handleDeleteSelected}
-              disabled={busy}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-40"
-              style={{
-                background: "rgba(239,68,68,0.15)",
-                color: "#fca5a5",
-                border: "1px solid rgba(239,68,68,0.3)",
-              }}
-            >
-              <Trash2 size={12} />
-              Excluir selecionadas
-            </button>
-          </>
-        ) : (
-          <span style={{ color: "var(--muted)" }}>
-            {requests.length} solicitaç{requests.length === 1 ? "ão" : "ões"}
-          </span>
-        )}
+          )}
+          <button
+            type="button"
+            onClick={handleDeleteSelected}
+            disabled={!hasSelection || isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-opacity disabled:opacity-30 disabled:cursor-not-allowed"
+            style={{
+              background: "rgba(239,68,68,0.15)",
+              color: "#fca5a5",
+              border: "1px solid rgba(239,68,68,0.3)",
+              cursor: hasSelection && !isPending ? "pointer" : "not-allowed",
+            }}
+          >
+            <Trash2 size={12} />
+            {isPending && hasSelection ? "Excluindo…" : "Excluir selecionadas"}
+          </button>
+        </div>
       </div>
 
       {/* Tabela */}
@@ -192,8 +220,9 @@ export function RequestsLiveInbox({ initial }: { initial: RequestView[] }) {
                       type="checkbox"
                       checked={selected.has(r.id)}
                       onChange={() => toggleOne(r.id)}
-                      style={{ accentColor: "var(--primary)" }}
-                      className="rounded"
+                      disabled={isPending}
+                      style={{ accentColor: "var(--primary)", width: 16, height: 16 }}
+                      className="rounded cursor-pointer"
                     />
                   </td>
                   <td className="px-3 py-3 text-xs whitespace-nowrap" style={{ color: "var(--muted)" }}>
@@ -221,12 +250,14 @@ export function RequestsLiveInbox({ initial }: { initial: RequestView[] }) {
                   </td>
                   <td className="px-3 py-3">
                     <button
+                      type="button"
                       onClick={() => handleDeleteOne(r.id)}
-                      disabled={busy}
-                      className="p-1.5 rounded-md transition-colors disabled:opacity-30"
+                      disabled={isPending}
+                      className="p-1.5 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                       style={{ color: "var(--muted)" }}
                       title="Excluir"
                       onMouseEnter={(e) => {
+                        if (isPending) return;
                         (e.currentTarget as HTMLElement).style.color = "#fca5a5";
                         (e.currentTarget as HTMLElement).style.background = "rgba(239,68,68,0.12)";
                       }}

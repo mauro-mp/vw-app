@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { signOut } from "@/auth";
 import type { EmployeeRole } from "@prisma/client";
-import { UtensilsCrossed, HelpCircle, Bell, LogOut } from "lucide-react";
+import { UtensilsCrossed, ListChecks, HelpCircle, Bell, LogOut } from "lucide-react";
 
 type NavItem = {
   href: string;
@@ -10,9 +10,10 @@ type NavItem = {
 };
 
 const NAV: NavItem[] = [
-  { href: "/cms/menu",     label: "Cardápio",    Icon: UtensilsCrossed },
-  { href: "/cms/faq",      label: "FAQ",          Icon: HelpCircle },
-  { href: "/ops/requests", label: "Solicitações", Icon: Bell },
+  { href: "/cms/menu",          label: "Cardápio",      Icon: UtensilsCrossed },
+  { href: "/cms/option-groups", label: "Option Groups", Icon: ListChecks },
+  { href: "/cms/faq",           label: "FAQ",            Icon: HelpCircle },
+  { href: "/ops/requests",      label: "Solicitações",   Icon: Bell },
 ];
 
 async function logoutAction() {
